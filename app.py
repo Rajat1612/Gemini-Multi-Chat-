@@ -1,81 +1,81 @@
-import os
 import streamlit as st
-import google.generativeai as genai
-from PyPDF2 import PdfReader
+import sqlite3
+import json
+import os
 
-# --- App Config ---
+# ---------------------------
+# Page Config
+# ---------------------------
 st.set_page_config(page_title="Gemini Multi-turn Chat", layout="centered")
 st.title("Gemini Multi-turn Chat")
+st.write("Attach context (PDF/TXT/MD) and chat seamlessly across browsers!")
 
-# --- API Key Configuration ---
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    st.error("❌ GOOGLE_API_KEY not found. Please set it in Streamlit → Settings → Secrets.")
-    st.stop()
-genai.configure(api_key=api_key)
+# ---------------------------
+# Database Setup
+# ---------------------------
+DB_FILE = "chat_history.db"
+conn = sqlite3.connect(DB_FILE)
+c = conn.cursor()
 
-# --- Initialize Gemini Model ---
-model = genai.GenerativeModel("gemini-1.5-flash")
+c.execute('''
+CREATE TABLE IF NOT EXISTS chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    chat_data TEXT
+)
+''')
+conn.commit()
 
-# --- Initialize Session State ---
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "user_name" not in st.session_state:
-    st.session_state.user_name = None
-if "uploaded_content" not in st.session_state:
-    st.session_state.uploaded_content = ""
+# Use a global session ID to sync across browsers
+SESSION_ID = "global_chat_session"
 
-# --- Sidebar Controls ---
-st.sidebar.header("Controls")
-persist_chat = st.sidebar.checkbox("Persist chat in SQLite (best-effort)", value=True)
-if st.sidebar.button("Clear chat"):
-    st.session_state.chat_history = []
-    st.session_state.user_name = None
-    st.session_state.uploaded_content = ""
-    st.success("Chat cleared!")
+# ---------------------------
+# Load Previous Chat
+# ---------------------------
+c.execute("SELECT chat_data FROM chat_history WHERE session_id=?", (SESSION_ID,))
+row = c.fetchone()
 
-# --- File Upload ---
-st.subheader("Attach context (PDF/TXT/MD)")
-uploaded_file = st.file_uploader("Drag and drop files here", type=["pdf", "txt", "md"])
-if uploaded_file:
-    file_text = ""
-    if uploaded_file.type == "application/pdf":
-        reader = PdfReader(uploaded_file)
-        for page in reader.pages:
-            file_text += page.extract_text() + "\n"
+if 'chat' not in st.session_state:
+    if row:
+        st.session_state.chat = json.loads(row[0])
     else:
-        file_text = uploaded_file.read().decode("utf-8")
+        st.session_state.chat = []
 
-    st.session_state.uploaded_content = file_text
-    st.success(f"File '{uploaded_file.name}' uploaded and added to context.")
+# ---------------------------
+# File Upload Section
+# ---------------------------
+uploaded_file = st.file_uploader("Drag and drop files here", type=["pdf", "txt", "md", "docx"])
+if uploaded_file is not None:
+    os.makedirs("uploads", exist_ok=True)
+    file_path = os.path.join("uploads", uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"Uploaded: {uploaded_file.name}")
 
-# --- Display Chat History ---
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# ---------------------------
+# Chat Display
+# ---------------------------
+for msg in st.session_state.chat:
+    if msg["role"] == "user":
+        st.chat_message("user").write(msg["content"])
+    else:
+        st.chat_message("assistant").write(msg["content"])
 
-# --- Chat Input ---
-if prompt := st.chat_input("Say something..."):
-    # Capture user name if not yet known
-    if st.session_state.user_name is None and ("my name is" in prompt.lower() or "i am" in prompt.lower()):
-        st.session_state.user_name = prompt.split()[-1].strip(" .,")
+# ---------------------------
+# New Message Input
+# ---------------------------
+user_input = st.chat_input("Say something...")
+if user_input:
+    # Save user message
+    st.session_state.chat.append({"role": "user", "content": user_input})
 
-    st.chat_message("user").markdown(prompt)
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
+    # Simulate assistant response (replace with Gemini API call)
+    assistant_response = f"You said: {user_input}"
+    st.session_state.chat.append({"role": "assistant", "content": assistant_response})
 
-    # Build the full context for Gemini
-    full_context = ""
-    if st.session_state.user_name:
-        full_context += f"User's name is {st.session_state.user_name}. "
-    if st.session_state.uploaded_content:
-        full_context += f"Context from uploaded document: {st.session_state.uploaded_content}\n"
-    for msg in st.session_state.chat_history:
-        full_context += f"{msg['role']}: {msg['content']}\n"
+    # Save chat to DB
+    c.execute("INSERT OR REPLACE INTO chat_history (session_id, chat_data) VALUES (?, ?)",
+              (SESSION_ID, json.dumps(st.session_state.chat)))
+    conn.commit()
 
-    response = model.generate_content(full_context)
-    reply = response.text if hasattr(response, "text") else "I'm here to help!"
-
-    with st.chat_message("assistant"):
-        st.markdown(reply)
-
-    st.session_state.chat_history.append({"role": "assistant", "content": reply})
+    st.experimental_rerun()
