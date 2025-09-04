@@ -38,7 +38,7 @@ with st.sidebar:
         st.session_state.chat_history = []
         c.execute("DELETE FROM chat_history WHERE session_id=?", (SESSION_ID,))
         conn.commit()
-        st.experimental_rerun()
+        st.rerun()
 
 # --- File Upload Section ---
 st.subheader("Attach context (PDF/TXT/MD)")
@@ -70,4 +70,4 @@ if user_input:
         )
         conn.commit()
 
-    st.experimental_rerun()
+    st.rerun()
