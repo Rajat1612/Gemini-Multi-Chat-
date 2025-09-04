@@ -3,4 +3,5 @@ google-generativeai
 pypdf2
 python-docx
 reportlab
-sqlite3 
+
+
